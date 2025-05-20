@@ -27,6 +27,7 @@ HEADERS = {
 }
 
 
+
 def clean_text(text):
     patterns_to_remove = [
         r"(?i)new customers get.*free credits",
