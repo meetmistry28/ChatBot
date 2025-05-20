@@ -1,0 +1,203 @@
+import json
+import nltk
+import string
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords
+
+# Download required resources
+for res in ['punkt', 'wordnet', 'stopwords']:
+    nltk.download(res, quiet=True)
+
+class DocChatBot:
+    def __init__(self, file_paths, history_file="history.json"):
+        self.file_paths = file_paths
+        self.history_file = history_file
+        self.lemmatizer = WordNetLemmatizer()
+        self.stop_words = set(stopwords.words('english'))
+        self.paragraph_data = self._read_json_files()
+        self.query_memory = {}
+        self.universal_keywords = ['vijay', 'lana']  # Universal keywords (fallback)
+        self.specific_keywords = ['akshay', 'ai']  # Predefined specific keywords
+        self._build_keyword_set()
+        self._initialize_history()
+
+    def _initialize_history(self):
+        """Initialize history file if it doesn't exist."""
+        try:
+            with open(self.history_file, 'r', encoding='utf-8') as f:
+                json.load(f)  # Verify file is valid JSON
+        except (FileNotFoundError, json.JSONDecodeError):
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump([], f)
+
+    def _save_history(self, question, answer):
+        """Append question and answer to history JSON file."""
+        try:
+            with open(self.history_file, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            history = []
+
+        history.append({"question": question, "answer": answer})
+        with open(self.history_file, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=4)
+
+    def _read_json_files(self):
+        """Read content from JSON files."""
+        paragraph_data = []
+        for file_path in self.file_paths:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as file:
+                    data = json.load(file)
+            except FileNotFoundError:
+                print(f"Warning: File {file_path} not found.")
+                continue
+
+            for header, content_dict in data.items():
+                content = ''
+                for key, value in content_dict.items():
+                    if isinstance(value, str) and value.strip():
+                        content = value
+                        break
+                    elif isinstance(value, (list, dict)):
+                        content = str(value)
+                        break
+
+                if content:
+                    paragraph_data.append({
+                        'bold': header,
+                        'content': content,
+                        'source': file_path
+                    })
+
+        return paragraph_data
+
+    def _preprocess_text(self, text):
+        """Preprocess text by tokenizing, lemmatizing, and removing stopwords/punctuation."""
+        text = text.lower()
+        tokens = nltk.word_tokenize(text)
+        filtered = [
+            self.lemmatizer.lemmatize(t)
+            for t in tokens
+            if t not in string.punctuation and t not in self.stop_words
+        ]
+        return filtered
+
+    def _build_keyword_set(self):
+        """Build set of specific keywords from JSON headers."""
+        for p in self.paragraph_data:
+            tokens = self._preprocess_text(p['bold'])
+            self.specific_keywords.extend([t for t in tokens if t not in self.universal_keywords])
+        self.specific_keywords = list(set(self.specific_keywords))  # Remove duplicates
+
+    def _find_main_topic(self, query):
+        """Identify the main keyword, prioritizing specific keywords over universal ones."""
+        query_tokens = set(self._preprocess_text(query))
+        
+        # Check specific keywords first
+        for kw in self.specific_keywords:
+            if kw in query_tokens:
+                for p in self.paragraph_data:
+                    header_tokens = set(self._preprocess_text(p['bold']))
+                    if kw in header_tokens:
+                        return kw
+
+        # Fallback to universal keywords
+        for kw in self.universal_keywords:
+            if kw in query_tokens:
+                for p in self.paragraph_data:
+                    header_tokens = set(self._preprocess_text(p['bold']))
+                    if kw in header_tokens:
+                        return kw
+
+        # If no keyword matches, try universal keywords without query match
+        for kw in self.universal_keywords:
+            for p in self.paragraph_data:
+                header_tokens = set(self._preprocess_text(p['bold']))
+                if kw in header_tokens:
+                    return kw
+
+        return None
+
+    def get_response(self, query):
+        """Generate response for the query and save to history."""
+        main_keyword = self._find_main_topic(query)
+        if not main_keyword:
+            response = "Sorry, I couldn't identify the main topic. Please include a relevant topic like 'Akshay', 'AI', 'biography', or 'arjun reddy'."
+            self._save_history(query, response)
+            return response
+
+        # Find paragraph with the keyword in the header
+        matched_paragraph = None
+        for p in self.paragraph_data:
+            header_tokens = set(self._preprocess_text(p['bold']))
+            if main_keyword in header_tokens:
+                matched_paragraph = p
+                break
+
+        if not matched_paragraph:
+            response = f"Sorry, no information found for '{main_keyword}'."
+            self._save_history(query, response)
+            return response
+
+        sentences = nltk.sent_tokenize(matched_paragraph['content'])
+        if not sentences:
+            response = "No content found under that topic."
+            self._save_history(query, response)
+            return response
+
+        # Create memory key for topic
+        key = matched_paragraph['bold']
+
+        # Setup memory if first time
+        if key not in self.query_memory:
+            self.query_memory[key] = {
+                'sentences': sentences,
+                'index': 0,
+                'last_keyword': None
+            }
+
+        mem = self.query_memory[key]
+
+        # Check if the query uses the same main keyword as last time
+        same_keyword = main_keyword == mem['last_keyword']
+        
+        # Update last keyword
+        mem['last_keyword'] = main_keyword
+
+        # Try to return relevant sentence for new queries
+        query_keywords = ['salary', 'income', 'earn', 'payment', 'money']
+        query_tokens = self._preprocess_text(query)
+        if not same_keyword:
+            for sent in sentences:
+                sent_tokens = self._preprocess_text(sent)
+                if any(word in sent_tokens for word in query_keywords + query_tokens):
+                    mem['index'] = (mem['sentences'].index(sent) + 1) % len(mem['sentences'])
+                    self._save_history(query, sent)
+                    return sent
+
+        # For same keyword, return next sentence in sequence
+        response = mem['sentences'][mem['index']]
+        mem['index'] = (mem['index'] + 1) % len(mem['sentences'])  # Loop back to start
+        self._save_history(query, response)
+        return response
+
+    def chat(self):
+        """Run the chatbot in an interactive loop."""
+        print("Welcome to the ChatBot! Ask about Vijay Deverakonda, Lana, Akshay, AI, or specific topics like 'biography', 'arjun reddy', 'salary'.")
+        print("Type 'exit' or 'quit' to stop.")
+        print("You: ", end="", flush=True)
+        while True:
+            user_input = input().strip()
+            if user_input.lower() in ['exit', 'quit']:
+                print("AI Bot: Goodbye!")
+                break
+            response = self.get_response(user_input)
+            print(f"chatBot: {response}")
+            print("You: ", end="", flush=True)
+
+if __name__ == "__main__":
+    json_files = ["vijay_4.json", "lana_2.json"]
+    chatbot = DocChatBot(json_files)
+    chatbot.chat()
+    
