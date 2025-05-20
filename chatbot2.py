@@ -120,11 +120,16 @@ class DocChatBot:
                 return re.sub(r'\s+', '_', topic)  # "deep learning" → "deep_learning"
         return "misc"
 
+
+#fbfhfbg
+
+
     def get_topic_filename(self, query):
         topic = self.detect_topic(query)
         folder = "topics"
         os.makedirs(folder, exist_ok=True)
         return os.path.join(folder, f"{topic}.json")
+    
 
 
     def get_response(self, query):
