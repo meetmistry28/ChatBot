@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
 
+# Download required NLTK resources
 for res in ['punkt', 'wordnet', 'stopwords']:
     nltk.download(res, quiet=True)
 
