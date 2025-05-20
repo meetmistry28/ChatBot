@@ -1,0 +1,21 @@
+[
+    {
+        "question": "what is ml",
+        "answer": [
+            "Today’s enterprises are inundated with data. To drive better business decisions, they have to make sense of it. But the sheer volume coupled with complexity makes data difficult to analyze using traditional tools. Building, testing, iterating, and deploying analytical models for identifying patterns and insights in data eats up employees’ time in a way that scales poorly. Machine learning can enable an organization to derive insights quickly as data scales.",
+            "Machine learning is a subset of artificial intelligence that enables a system to autonomously learn and improve using neural networks and deep learning, without being explicitly programmed, by feeding it large amounts of data."
+        ]
+    },
+    {
+        "question": "tell use of ml in human life",
+        "answer": [
+            "Explore these examples of machine learning in the real world to understand how it appears in our everyday lives."
+        ]
+    },
+    {
+        "question": "tell me about ml",
+        "answer": [
+            "Artificial intelligence is an area of computer science concerned with building computers and machines that can reason, learn, and act in a way resembling human intelligence, or systems that involve data whose scale exceeds what humans can analyze. The field includes many different disciplines including data analytics, statistics, hardware and software engineering, neuroscience, and even philosophy."
+        ]
+    }
+]

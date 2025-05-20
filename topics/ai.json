@@ -1,0 +1,39 @@
+[
+    {
+        "question": "use of ai",
+        "answer": [
+            "Artificial intelligence (AI) applications are software programs that use AI techniques to perform specific tasks. These tasks can range from simple, repetitive tasks to complex, cognitive tasks that require human-like intelligence.",
+            "AI applications are becoming increasingly common in a wide variety of industries, including healthcare, finance, retail, and manufacturing. As AI technology continues to develop, we can expect to see even more innovative and groundbreaking AI applications in the future."
+        ]
+    },
+    {
+        "question": "what is ai",
+        "answer": [
+            "Artificial intelligence (AI) is a set of technologies that enable computers to perform a variety of advanced functions, including the ability to see, understand and translate spoken and written language, analyze data, make recommendations, and more.",
+            "AI is the backbone of innovation in modern computing, unlocking value for individuals and businesses. For example, optical character recognition (OCR) uses AI to extract text and data from images and documents, turns unstructured content into business-ready structured data, and unlocks valuable insights.",
+            "Artificial intelligence is a field of science concerned with building computers and machines that can reason, learn, and act in such a way that would normally require human intelligence or that involves data whose scale exceeds what humans can analyze.",
+            "AI is a broad field that encompasses many different disciplines, including computer science, data analytics and statistics, hardware and software engineering, linguistics, neuroscience, and even philosophy and psychology.",
+            "On an operational level for business use, AI is a set of technologies that are based primarily on machine learning and deep learning, used for data analytics, predictions and forecasting, object categorization, natural language processing, recommendations, intelligent data retrieval, and more.",
+            "While the specifics vary across different AI techniques, the core principle revolves around data. AI systems learn and improve through exposure to vast amounts of data, identifying patterns and relationships that humans may miss.",
+            "This learning process often involves algorithms, which are sets of rules or instructions that guide the AI's analysis and decision-making. In machine learning, a popular subset of AI, algorithms are trained on labeled or unlabeled data to make predictions or categorize information.",
+            "Deep learning, a further specialization, utilizes artificial neural networks with multiple layers to process information, mimicking the structure and function of the human brain. Through continuous learning and adaptation, AI systems become increasingly adept at performing specific tasks, from recognizing images to translating languages and beyond.",
+            "Want to learn how to get started with AI? Take the free beginner's introduction to generative AI.",
+            "For instance, four stages of AI development are commonly recognized."
+        ]
+    },
+    {
+        "question": "tell me about ai",
+        "answer": [
+            "Artificial intelligence (AI) is a set of technologies that enable computers to perform a variety of advanced functions, including the ability to see, understand and translate spoken and written language, analyze data, make recommendations, and more.",
+            "AI is the backbone of innovation in modern computing, unlocking value for individuals and businesses. For example, optical character recognition (OCR) uses AI to extract text and data from images and documents, turns unstructured content into business-ready structured data, and unlocks valuable insights.",
+            "Artificial intelligence is a field of science concerned with building computers and machines that can reason, learn, and act in such a way that would normally require human intelligence or that involves data whose scale exceeds what humans can analyze.",
+            "AI is a broad field that encompasses many different disciplines, including computer science, data analytics and statistics, hardware and software engineering, linguistics, neuroscience, and even philosophy and psychology.",
+            "On an operational level for business use, AI is a set of technologies that are based primarily on machine learning and deep learning, used for data analytics, predictions and forecasting, object categorization, natural language processing, recommendations, intelligent data retrieval, and more.",
+            "While the specifics vary across different AI techniques, the core principle revolves around data. AI systems learn and improve through exposure to vast amounts of data, identifying patterns and relationships that humans may miss.",
+            "This learning process often involves algorithms, which are sets of rules or instructions that guide the AI's analysis and decision-making. In machine learning, a popular subset of AI, algorithms are trained on labeled or unlabeled data to make predictions or categorize information.",
+            "Deep learning, a further specialization, utilizes artificial neural networks with multiple layers to process information, mimicking the structure and function of the human brain. Through continuous learning and adaptation, AI systems become increasingly adept at performing specific tasks, from recognizing images to translating languages and beyond.",
+            "Want to learn how to get started with AI? Take the free beginner's introduction to generative AI.",
+            "Artificial intelligence can be organized in several ways, depending on stages of development or actions being performed."
+        ]
+    }
+]
