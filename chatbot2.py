@@ -19,6 +19,9 @@ HEADERS = {
                   "Chrome/91.0.4472.124 Safari/537.36"
 }
 
+
+#efadsfasd asfsdkjflkjhsdkl
+
 def clean_text(text):
     patterns_to_remove = [
         r"(?i)new customers get.*free credits",
