@@ -20,6 +20,7 @@ def get_search_urls(query, num_results=5):
 
 def extract_sentences_from_url(url):
     try:
+        #skdjhkashdh
         headers = {"User-Agent": "Mozilla/5.0"}
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
