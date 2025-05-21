@@ -1,0 +1,34 @@
+[
+    {
+        "question": "what is AI",
+        "answer": [
+            "Deep learning is a subset of machine learning that uses multilayered neural networks, called deep neural networks, that more closely simulate the complex decision-making power of the human brain.",
+            "Artificial intelligence (AI) is technology that enables computers and machines to simulate human learning, comprehension, problem solving, decision making, creativity and autonomy."
+        ]
+    },
+    {
+        "question": "how AI works",
+        "answer": [
+            "A recurring theme in science fiction, artificial intelligence (AI) has captured our collective imagination and enthralled audiences for over a century. From the early days of science fiction literature to the captivating narratives of iconic movies, the concept of intelligent machines has been a source of fascination and speculation."
+        ]
+    },
+    {
+        "question": "what is neural network in AI",
+        "answer": [
+            "Neural networks have several use cases across many industries, such as the following:"
+        ]
+    },
+    {
+        "question": "how neural network works in AI",
+        "answer": [
+            "A neural network is a method in artificial intelligence (AI) that teaches computers to process data in a way that is inspired by the human brain. It is a type of machine learning (ML) process, called deep learning, that uses interconnected nodes or neurons in a layered structure that resembles the human brain. It creates an adaptive system that computers use to learn from their mistakes and improve continuously. Thus, artificial neural networks attempt to solve complicated problems, like summarizing documents or recognizing faces, with greater accuracy."
+        ]
+    },
+    {
+        "question": "When AI born",
+        "answer": [
+            "In Greek mythology, Talos was a creature made of bronze who acted as guardian for the island of Crete. He would throw boulders at the ships of invaders and would complete 3 circuits around the island's perimeter daily. According to pseudo-Apollodorus' Bibliotheke, Hephaestus forged Talos with the aid of a cyclops and presented the automaton as a gift to Minos. In the Argonautica, Jason and the Argonauts defeated Talos by removing a plug near his foot, causing the vital ichor to flow out from his body and rendering him lifeless.",
+            "The history of artificial intelligence (AI) began in antiquity, with myths, stories, and rumors of artificial beings endowed with intelligence or consciousness by master craftsmen. The study of logic and formal reasoning from antiquity to the present led directly to the invention of the programmable digital computer in the 1940s, a machine based on abstract mathematical reasoning. This device and the ideas behind it inspired scientists to begin discussing the possibility of building an electronic brain."
+        ]
+    }
+]
