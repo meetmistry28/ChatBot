@@ -11,7 +11,7 @@ for res in ['punkt', 'wordnet', 'stopwords']:
     nltk.download(res, quiet=True)
 
 CONFIG = {
-    'NUM_RESULTS': 100,
+    'NUM_RESULTS': 1000,
     'MAX_PARAS_PER_SITE': 2,
     'MIN_TEXT_LENGTH': 70,
     'ALPHA_RATIO': 0.7,
@@ -28,11 +28,14 @@ SKIP_RESPONSES = {
     "[Info] Failed to fetch or parse the page.",
 }
 
+# Extended skip patterns for security messages, blockers, JavaScript, etc.
 SKIP_PATTERNS = [
-    r"our editors will review", r"click here", r"learn more", r"sign up", r"subscribe",
-    r"this page is not available", r"this article is a stub", r"read more", r"cookies?",
-    r"submit your feedback", r"thank you for your submission", r"privacy.*terms",
-    r"read this article on", r"breaking news", r"advertisement"
+    r"cloudflare", r"access denied", r"please enable javascript", r"your browser is not supported",
+    r"security service", r"blocked by website", r"ray id", r"you were blocked", r"support page",
+    r"list of supported browsers", r"browser check", r"checking your browser", r"captcha",
+    r"this website is using a security service", r"JavaScript is disabled", r"enable JavaScript",
+    r"page not found", r"404 error", r"sign up", r"subscribe", r"read more", r"cookies?",
+    r"our editors will review", r"submit your feedback", r"privacy.*terms", r"advertisement"
 ]
 
 def clean_text(text):
@@ -132,7 +135,7 @@ class DocChatBot:
                 answer = answers[data['answer_index']]
                 data['answer_index'] += 1
                 total_attempts += 1
-                if answer not in SKIP_RESPONSES:
+                if answer not in SKIP_RESPONSES and clean_text(answer):
                     return answer
 
             data['url_index'] = (data['url_index'] + 1) % len(urls)
