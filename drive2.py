@@ -9,8 +9,7 @@ import os
 import json
 import random
 
-
-for res in ['punkt', 'wordnet', 'stopwords', 'averaged_perceptron_tagger', 'maxent_ne_chunker', 'words']:
+for res in ['punkt', 'wordnet', 'stopwords', 'averaged_perceptron_tagger', 'maxent_ne_chunker', 'words']:       
     nltk.download(res, quiet=True)
 
 HEADERS = {
@@ -87,7 +86,6 @@ def fetch_google_summary(query, num_results=5, max_answers=5):
 
     return summaries if summaries else ["[Info] No accurate and relevant content found. Try rephrasing your question."]
 
-
 class BaseChatBot:
     def __init__(self):
         self.lemmatizer = WordNetLemmatizer()
@@ -108,7 +106,6 @@ class BaseChatBot:
 
     def _scrape_web_data(self, query):
         return fetch_google_summary(query, num_results=10, max_answers=10)
-
 
 class DocChatBot(BaseChatBot):
     def __init__(self):
@@ -192,14 +189,12 @@ class DocChatBot(BaseChatBot):
                 return re.sub(r'\s+', '_', topic)  # "deep learning" → "deep_learning"
         return "misc"
 
-
     def get_topic_filename(self, query):
         topic = self.detect_topic(query)
         folder = "topics"
         os.makedirs(folder, exist_ok=True)
         return os.path.join(folder, f"{topic}.json")
     
-
 
     def get_response(self, query):
         filename = self.get_topic_filename(query)
@@ -241,9 +236,6 @@ class DocChatBot(BaseChatBot):
         self.save_qa_to_file(query, answer, filename)
         return answer
 
-
-
-
     def chat(self):
         print("Welcome to the ChatBot with Google Web Fallback!")
         print("Type 'exit' or 'quit' to stop.")
@@ -254,7 +246,6 @@ class DocChatBot(BaseChatBot):
                 break
             response = self.get_response(user_input)
             print(f"AI Bot: {response}")
-
 
     def save_qa_to_file(self, question, answer, filename):
         data = []
@@ -285,7 +276,6 @@ class DocChatBot(BaseChatBot):
 
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
-
 
 if __name__ == "__main__":
     chatbot = DocChatBot()

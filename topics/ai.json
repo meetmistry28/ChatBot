@@ -71,8 +71,7 @@
     {
         "question": "ww many library in AI?",
         "answer": [
-            "AI libraries have become essential tools in the development of groundbreaking applications across various industries. Here are some examples of how these libraries are being used in practice:",
-            "Google search failed: HTTPSConnectionPool(host='www.google.com', port=443): Max retries exceeded with url: /search?q=ww+many+library+in+AI%3F&num=12&hl=en&start=0&safe=active (Caused by NameResolutionError(\"<urllib3.connection.HTTPSConnection object at 0x00000284CEACDE50>: Failed to resolve 'www.google.com' ( getaddrinfo failed)\"))"
+            "AI libraries have become essential tools in the development of groundbreaking applications across various industries. Here are some examples of how these libraries are being used in practice:"
         ]
     }
 ]
