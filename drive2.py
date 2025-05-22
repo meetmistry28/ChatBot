@@ -116,19 +116,6 @@ class DocChatBot(BaseChatBot):
             "neural network", "chatbot", "language model"
         ]
 
-    def detect_topic(self, query):
-        query = query.lower()
-        for topic in self.known_topics:
-            if topic in query:
-                return re.sub(r'\s+', '_', topic)
-        return "misc"
-
-    def get_topic_filename(self, query):
-        topic = self.detect_topic(query)
-        folder = "topics"
-        os.makedirs(folder, exist_ok=True)
-        return os.path.join(folder, f"{topic}.json")
-
     def get_response(self, query):
         filename = self.get_topic_filename(query)
         existing_data = []
@@ -195,47 +182,6 @@ class DocChatBot(BaseChatBot):
         os.makedirs(folder, exist_ok=True)
         return os.path.join(folder, f"{topic}.json")
     
-
-    def get_response(self, query):
-        filename = self.get_topic_filename(query)
-        existing_data = []
-
-        # Load existing topic file if it exists
-        if os.path.exists(filename):
-            with open(filename, "r", encoding="utf-8") as f:
-                try:
-                    existing_data = json.load(f)
-                except json.JSONDecodeError:
-                    existing_data = []
-
-        question_data = None
-        for entry in existing_data:
-            if entry["question"].strip().lower() == query.strip().lower():
-                question_data = entry
-                break
-
-        if question_data:
-            if len(question_data["answer"]) < 10:
-                new_answers = self._scrape_web_data(query)
-                for ans in new_answers:
-                    cleaned = clean_answer_text(ans)
-                    if cleaned not in question_data["answer"]:
-                        question_data["answer"].append(cleaned)
-                        self.save_qa_to_file(query, cleaned, filename)
-                        return cleaned
-            return random.choice(question_data["answer"])
-        
-        if query not in self.web_memory:
-            self.web_memory[query] = self._scrape_web_data(query)
-
-        answers = self.web_memory[query]
-        if not answers:
-            return "I'm sorry, I couldn't find anything right now."
-
-        answer = random.choice(answers)
-        self.save_qa_to_file(query, answer, filename)
-        return answer
-
     def chat(self):
         print("Welcome to the ChatBot with Google Web Fallback!")
         print("Type 'exit' or 'quit' to stop.")
