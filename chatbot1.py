@@ -1,44 +1,38 @@
+# [Same imports as before]
 import nltk
-import string
 import re
-import requests
+import time
+import json
+import os
 from bs4 import BeautifulSoup
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from nltk import pos_tag, word_tokenize, ne_chunk
+from nltk.tree import Tree
+import undetected_chromedriver as uc
 
-# Download required NLTK resources
-for res in ['punkt', 'wordnet', 'stopwords']:
+# NLTK downloads
+for res in ['punkt', 'wordnet', 'stopwords', 'averaged_perceptron_tagger', 'maxent_ne_chunker', 'words']:
     nltk.download(res, quiet=True)
 
+# Configuration
 CONFIG = {
-    'NUM_RESULTS': 1000,
+    'NUM_RESULTS': 100,
     'MAX_PARAS_PER_SITE': 2,
     'MIN_TEXT_LENGTH': 70,
     'ALPHA_RATIO': 0.7,
-    'REQUEST_TIMEOUT': 5,
-    'HEADERS': {
-        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/91.0.4472.124 Safari/537.36")
-    }
+    'HEADLESS': False,
+    'MIN_KEYWORD_MATCH_RATIO': 0.7
 }
 
+# Skip sets
 SKIP_RESPONSES = {
     "[Info] No relevant content found on this page.",
     "[Info] Failed to fetch or parse the page.",
 }
+SKIP_PATTERNS = [r"cloudflare", r"access denied", r"captcha", r"404 error", r"subscribe", r"register", r"advertisement"]
 
-SKIP_PATTERNS = [
-    r"our editors will review", r"click here", r"learn more", r"sign up", r"subscribe",
-    r"this page is not available", r"this article is a stub", r"read more", r"cookies?",
-    r"submit your feedback", r"thank you for your submission", r"privacy.*terms",
-    r"read this article on", r"breaking news", r"advertisement"
-]
-
+# Text processing
 def clean_text(text):
     for pattern in SKIP_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
@@ -46,132 +40,167 @@ def clean_text(text):
     return text
 
 def clean_answer_text(text):
-    text = re.sub(r'\[[^\]]*\]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+    return re.sub(r'\s+', ' ', re.sub(r'\[[^\]]*\]', '', text)).strip()
 
-def is_meaningful_text(text, query_keywords):
-    if not text or len(text) < CONFIG['MIN_TEXT_LENGTH']:
-        return False
-    if not any(word in text.lower() for word in query_keywords):
-        return False
+def lemmatize_words(text, lemmatizer, stop_words):
+    return set(lemmatizer.lemmatize(w) for w in word_tokenize(text.lower()) if w.isalpha() and w not in stop_words)
+
+def is_meaningful_text(text, query_keywords, lemmatizer, stop_words):
+    if len(text) < CONFIG['MIN_TEXT_LENGTH']: return False
+    lemmas = lemmatize_words(text, lemmatizer, stop_words)
+    overlap = query_keywords & lemmas
     alpha_ratio = sum(c.isalpha() for c in text) / max(len(text), 1)
-    return alpha_ratio > CONFIG['ALPHA_RATIO']
+    return len(overlap) / max(len(query_keywords), 1) >= CONFIG['MIN_KEYWORD_MATCH_RATIO'] and alpha_ratio > CONFIG['ALPHA_RATIO']
 
 def is_definition_like(text, query):
     query = query.lower().strip().rstrip('?')
     terms = [query]
-    if query.startswith('what is ') or query.startswith('who is '):
-        terms.append(re.sub(r'^(what|who) is ', '', query))
+    if query.startswith(('what is ', 'who is ')):
+        terms.append(query.split(' ', 2)[-1])
     for term in terms:
-        if re.match(rf"{re.escape(term)}\s+(is|was|are|refers to|means)\b", text.lower()):
+        if re.match(rf"^{re.escape(term)}\s+(is|was|are|refers to|means|can be defined as|is known as)\b", text.lower()):
             return True
     return False
 
-def extract_relevant_paragraphs(soup, query, max_paras=CONFIG['MAX_PARAS_PER_SITE']):
-    query_keywords = set(query.lower().split())
-    paragraphs = []
+def extract_relevant_paragraphs(soup, query, lemmatizer, stop_words):
+    query_keywords = lemmatize_words(query, lemmatizer, stop_words)
+    candidates = []
     for para in soup.find_all('p'):
-        raw_text = para.get_text(separator=' ', strip=True)
-        raw_text = clean_text(raw_text)
-        if not raw_text:
-            continue
-        if is_definition_like(raw_text, query) or is_meaningful_text(raw_text, query_keywords):
-            cleaned = clean_answer_text(raw_text)
-            if cleaned not in SKIP_RESPONSES and len(cleaned.split()) >= 10:
-                paragraphs.append(cleaned)
-        if len(paragraphs) >= max_paras:
-            break
-    return paragraphs
+        text = clean_text(para.get_text(separator=' ', strip=True))
+        if not text: continue
+        text = clean_answer_text(text)
+        if text in SKIP_RESPONSES or len(text.split()) < 10: continue
+        lemmas = lemmatize_words(text, lemmatizer, stop_words)
+        overlap = len(query_keywords & lemmas)
+        is_def = is_definition_like(text, query)
+        candidates.append((is_def, overlap, text))
+    candidates.sort(key=lambda x: (not x[0], -x[1]))
+    return [x[2] for x in candidates[:CONFIG['MAX_PARAS_PER_SITE']] if is_meaningful_text(x[2], query_keywords, lemmatizer, stop_words)]
 
-def fetch_with_requests(url):
-    try:
-        response = requests.get(url, headers=CONFIG['HEADERS'], timeout=CONFIG['REQUEST_TIMEOUT'])
-        return BeautifulSoup(response.content, 'html.parser')
-    except Exception:
-        return None
+# Search
+def search_google_urls(query, driver):
+    driver.get(f"https://www.bing.com/search?q={query.replace(' ', '+')}")
+    time.sleep(3)
+    soup = BeautifulSoup(driver.page_source, 'html.parser')
+    return [a['href'] for a in soup.select('li.b_algo h2 a') if a['href'].startswith('http')][:CONFIG['NUM_RESULTS']]
 
-def fetch_with_selenium(url):
-    try:
-        options = Options()
-        options.add_argument('--headless')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        driver.get(url)
-        html = driver.page_source
-        driver.quit()
-        return BeautifulSoup(html, 'html.parser')
-    except Exception:
-        return None
+# Named entity extraction
+def extract_named_entities(query):
+    chunked = ne_chunk(pos_tag(word_tokenize(query)))
+    return [" ".join(leaf[0] for leaf in subtree.leaves()).lower() for subtree in chunked if isinstance(subtree, Tree)]
 
-def extract_answer_from_url(url, query):
-    soup = fetch_with_requests(url)
-    answers = extract_relevant_paragraphs(soup, query) if soup else []
+# Topic normalization
+def normalize_topic_name(query, stop_words):
+    query = query.lower().strip().rstrip('?')
+    lemmatizer = WordNetLemmatizer()
+    entities = extract_named_entities(query)
+    existing_topics = [f[:-5] for f in os.listdir('data') if f.endswith('.json')]
 
-    if not answers:  # Fall back to Selenium
-        soup = fetch_with_selenium(url)
-        answers = extract_relevant_paragraphs(soup, query) if soup else []
+    for entity in entities:
+        slug = entity.replace(' ', '_')
+        for topic in existing_topics:
+            if slug in topic: return topic
+        return slug
 
-    return answers if answers else ["[Info] No relevant content found on this page."]
+    nouns = [w for w, pos in pos_tag(word_tokenize(query)) if pos.startswith('NN') and w not in stop_words]
+    if nouns:
+        return '_'.join(sorted(set(lemmatizer.lemmatize(w) for w in nouns)))
 
-def search_google_urls(query, num_results=CONFIG['NUM_RESULTS']):
-    try:
-        from googlesearch import search
-    except ImportError:
-        return []
-    try:
-        return list(search(query, num_results=num_results))
-    except Exception:
-        return []
+    fallback = [w for w in re.findall(r'\b[a-z]+\b', query) if w not in stop_words]
+    return '_'.join(fallback[:3]) or 'general'
 
+# Main chatbot class
 class DocChatBot:
     def __init__(self):
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words('english'))
         self.query_data = {}
+        os.makedirs("data", exist_ok=True)
+
+        options = uc.ChromeOptions()
+        if CONFIG['HEADLESS']: options.add_argument('--headless=new')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument("user-agent=Mozilla/5.0 ... Chrome/115.0.0.0 Safari/537.36")
+        self.driver = uc.Chrome(options=options)
+        self.driver.set_page_load_timeout(15)
+
+    def __del__(self):
+        try: self.driver.quit()
+        except: pass
+
+    def save_to_topic_json(self, question, answer):
+        topic = normalize_topic_name(question, self.stop_words)
+        path = os.path.join("data", f"{topic}.json")
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f: data = json.load(f)
+        else: data = {}
+
+        q_key = question.strip().lower()
+        if q_key not in data: data[q_key] = []
+        if answer not in data[q_key]:
+            data[q_key].append(answer)
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+    def fetch_with_selenium(self, url):
+        try:
+            self.driver.get(url)
+            time.sleep(3)
+            return BeautifulSoup(self.driver.page_source, 'html.parser')
+        except:
+            return None
 
     def get_next_answer(self, query):
         query = query.strip().lower()
         if query not in self.query_data:
-            urls = search_google_urls(query)
+            urls = search_google_urls(query, self.driver)
             if not urls:
-                return "[Error] Could not fetch search results. Check internet or install googlesearch-python."
-            self.query_data[query] = {
-                'urls': urls,
-                'answers_per_url': {},
-                'url_index': 0,
-                'answer_index': 0,
-            }
+                answer = "[Error] Could not fetch search results."
+                self.save_to_topic_json(query, answer)
+                return answer
+            self.query_data[query] = {'urls': urls, 'answers_per_url': {}, 'url_index': 0, 'answer_index': 0, 'failed_urls': set()}
 
         data = self.query_data[query]
         urls = data['urls']
-        total_attempts = 0
-        max_attempts = len(urls) * 3
 
-        while total_attempts < max_attempts:
-            current_url = urls[data['url_index']]
-            if current_url not in data['answers_per_url']:
-                answers = extract_answer_from_url(current_url, query)
-                data['answers_per_url'][current_url] = answers
+        for _ in range(len(urls)):
+            url = urls[data['url_index']]
+            if url in data['failed_urls']:
+                data['url_index'] = (data['url_index'] + 1) % len(urls)
+                continue
 
-            answers = data['answers_per_url'][current_url]
+            if url not in data['answers_per_url']:
+                soup = self.fetch_with_selenium(url)
+                if not soup:
+                    data['failed_urls'].add(url)
+                    data['url_index'] = (data['url_index'] + 1) % len(urls)
+                    continue
+                answers = extract_relevant_paragraphs(soup, query, self.lemmatizer, self.stop_words)
+                if not answers:
+                    data['failed_urls'].add(url)
+                    data['url_index'] = (data['url_index'] + 1) % len(urls)
+                    continue
+                data['answers_per_url'][url] = answers
+
+            answers = data['answers_per_url'][url]
             while data['answer_index'] < len(answers):
-                answer = answers[data['answer_index']]
+                ans = answers[data['answer_index']]
                 data['answer_index'] += 1
-                total_attempts += 1
-                if answer not in SKIP_RESPONSES:
-                    return answer
+                if ans not in SKIP_RESPONSES and clean_text(ans):
+                    self.save_to_topic_json(query, ans)
+                    return ans
 
-            data['url_index'] = (data['url_index'] + 1) % len(urls)
             data['answer_index'] = 0
+            data['url_index'] = (data['url_index'] + 1) % len(urls)
 
-        return "[Info] No accurate and relevant content found. Try rephrasing your question."
+        fallback = "[Info] No accurate and relevant content found. Try rephrasing your question."
+        self.save_to_topic_json(query, fallback)
+        return fallback
 
     def chat(self):
-        print("Welcome to the Smart ChatBot!")
-        print("Type 'exit' or 'quit' to stop.")
+        print("Welcome to the Smart ChatBot!\nType 'exit' to quit.")
         while True:
             user_input = input("You: ").strip()
             if user_input.lower() in ['exit', 'quit']:
@@ -180,6 +209,7 @@ class DocChatBot:
             response = self.get_next_answer(user_input)
             print(f"AI Bot: {response}")
 
+# Run the bot
 if __name__ == "__main__":
-    chatbot = DocChatBot()
-    chatbot.chat()
+    bot = DocChatBot()
+    bot.chat()
