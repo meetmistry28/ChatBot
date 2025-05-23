@@ -39,6 +39,12 @@ def clean_text(text):
 def clean_answer_text(text):
     return re.sub(r'\s+', ' ', re.sub(r'\[[^\]]*\]', '', text)).strip()
 
+def normalize_question(question):
+    """Normalize question by removing punctuation, extra spaces, and converting to lowercase."""
+    question = re.sub(r'[^\w\s]', '', question)  # Remove punctuation
+    question = re.sub(r'\s+', ' ', question.strip()).lower()  # Normalize spaces and case
+    return question
+
 def lemmatize_words(text, lemmatizer, stop_words):
     return set(lemmatizer.lemmatize(w) for w in word_tokenize(text.lower()) if w.isalpha() and w not in stop_words)
 
@@ -50,7 +56,7 @@ def is_meaningful_text(text, query_keywords, lemmatizer, stop_words):
     return len(overlap) / max(len(query_keywords), 1) >= CONFIG['MIN_KEYWORD_MATCH_RATIO'] and alpha_ratio > CONFIG['ALPHA_RATIO']
 
 def is_definition_like(text, query):
-    query = query.lower().strip().rstrip('?')
+    query = normalize_question(query)
     terms = [query]
     if query.startswith(('what is ', 'who is ', 'why ', 'how ')):
         terms.append(query.split(' ', 2)[-1])
@@ -85,7 +91,7 @@ def extract_named_entities(query):
     return [" ".join(leaf[0] for leaf in subtree.leaves()).lower() for subtree in chunked if isinstance(subtree, Tree)]
 
 def normalize_topic_name(query, stop_words):
-    query = query.lower().strip().rstrip('?')
+    query = normalize_question(query)
     lemmatizer = WordNetLemmatizer()
     entities = extract_named_entities(query)
     existing_topics = [f[:-5] for f in os.listdir('data') if f.endswith('.json')]
@@ -146,18 +152,21 @@ class DocChatBot:
             with open(path, 'r', encoding='utf-8') as f:
                 try:
                     data = json.load(f)
-                except: pass
-        q_key = question.strip().lower()
+                    if not isinstance(data.get("qas", []), list):
+                        data["qas"] = []
+                except:
+                    data = {"topic": topic, "qas": []}
+        q_key = normalize_question(question)
         found = False
         for qa in data["qas"]:
-            if qa["question"].strip().lower() == q_key:
+            if normalize_question(qa["question"]) == q_key:
                 found = True
                 if isinstance(qa["answer"], str):
                     qa["answer"] = [qa["answer"]]
-                if answer.strip() not in qa["answer"]:
+                if answer.strip() and answer.strip() not in qa["answer"] and answer.strip() not in SKIP_RESPONSES:
                     qa["answer"].append(answer.strip())
                 break
-        if not found:
+        if not found and answer.strip() and answer.strip() not in SKIP_RESPONSES:
             data["qas"].append({"question": question.strip(), "answer": [answer.strip()]})
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -170,21 +179,66 @@ class DocChatBot:
         with open(path, 'r', encoding='utf-8') as f:
             try:
                 data = json.load(f)
+                if not isinstance(data.get("qas", []), list):
+                    return None, topic
+                for qa in data.get("qas", []):
+                    if not isinstance(qa.get("answer"), list):
+                        qa["answer"] = [qa["answer"]] if isinstance(qa.get("answer"), str) else []
+                    if normalize_question(qa["question"]) == normalize_question(question):
+                        return [ans for ans in qa["answer"] if ans and ans not in SKIP_RESPONSES], topic
+                return None, topic
             except:
-                return None, None
-        for qa in data.get("qas", []):
-            if qa["question"].strip().lower() == question.strip().lower():
-                return qa["answer"], topic
-        return None, topic
+                return None, topic
+
+    def suggest_related_questions(self, query, topic):
+        suggestions = []
+        query_keywords = lemmatize_words(query, self.lemmatizer, self.stop_words)
+        
+        # Check current topic's JSON
+        if topic:
+            path = os.path.join("data", f"{topic}.json")
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    try:
+                        data = json.load(f)
+                    except:
+                        data = {"qas": []}
+                for qa in data.get("qas", []):
+                    if normalize_question(qa["question"]) != normalize_question(query):
+                        q_keywords = lemmatize_words(qa["question"], self.lemmatizer, self.stop_words)
+                        overlap = len(query_keywords & q_keywords) / max(len(query_keywords), 1)
+                        if overlap > 0.5:  # Threshold for relevance
+                            suggestions.append(qa["question"])
+
+        # If fewer than 2 suggestions, search all other JSON files
+        if len(suggestions) < 2:
+            for json_file in os.listdir('data'):
+                if json_file.endswith('.json') and json_file[:-5] != topic:
+                    with open(os.path.join("data", json_file), 'r', encoding='utf-8') as f:
+                        try:
+                            data = json.load(f)
+                        except:
+                            continue
+                        for qa in data.get("qas", []):
+                            q_keywords = lemmatize_words(qa["question"], self.lemmatizer, self.stop_words)
+                            overlap = len(query_keywords & q_keywords) / max(len(query_keywords), 1)
+                            if overlap > 0.5 and qa["question"] not in suggestions:
+                                suggestions.append(qa["question"])
+                            if len(suggestions) >= 2:  # Aim for at least 2 suggestions
+                                break
+                if len(suggestions) >= 2:
+                    break
+
+        return suggestions[:3]  # Return up to 3 related questions
 
     def get_next_answer(self, query):
         stored_answers, topic = self.get_from_json(query)
         if stored_answers:
-            used = self.query_data.get(query, {}).get("used_answers", set())
+            used = self.query_data.get(normalize_question(query), {}).get("used_answers", set())
             for ans in stored_answers:
-                if ans not in used:
-                    self.query_data.setdefault(query, {"used_answers": set()})["used_answers"].add(ans)
-                    return ans
+                if ans and ans not in used and ans not in SKIP_RESPONSES:
+                    self.query_data.setdefault(normalize_question(query), {"used_answers": set()})["used_answers"].add(ans)
+                    return ans, topic
 
         query_keywords = lemmatize_words(query, self.lemmatizer, self.stop_words)
         urls = search_google_urls(query, self.driver)
@@ -194,16 +248,14 @@ class DocChatBot:
                 continue
             answers = extract_relevant_paragraphs(soup, query, self.lemmatizer, self.stop_words)
             for ans in answers:
-                if stored_answers and ans in stored_answers:
-                    continue
-                if ans not in SKIP_RESPONSES and clean_text(ans):
+                if (not stored_answers or ans not in stored_answers) and ans not in SKIP_RESPONSES and clean_text(ans):
                     self.save_to_topic_json(query, ans)
-                    self.query_data.setdefault(query, {"used_answers": set()})["used_answers"].add(ans)
-                    return ans
+                    self.query_data.setdefault(normalize_question(query), {"used_answers": set()})["used_answers"].add(ans)
+                    return ans, topic
 
         fallback = "[Info] No accurate and relevant content found. Try rephrasing your question."
         self.save_to_topic_json(query, fallback)
-        return fallback
+        return fallback, topic
 
     def chat(self):
         print("Welcome to the Smart ChatBot!\nType 'exit' to quit.")
@@ -212,8 +264,14 @@ class DocChatBot:
             if user_input.lower() in ['exit', 'quit']:
                 print("AI Bot: Goodbye!")
                 break
-            response = self.get_next_answer(user_input)
+            response, topic = self.get_next_answer(user_input)
             print(f"AI Bot: {response}")
+            suggestions = self.suggest_related_questions(user_input, topic)
+            if suggestions:
+                print("\nRelated questions you might be interested in:")
+                for i, q in enumerate(suggestions, 1):
+                    print(f"{i}. {q}")
+            print()
 
 if __name__ == "__main__":
     bot = DocChatBot()
