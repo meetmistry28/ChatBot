@@ -1,4 +1,3 @@
-# [Same imports as before]
 import nltk
 import re
 import time
@@ -10,12 +9,11 @@ from nltk.corpus import stopwords
 from nltk import pos_tag, word_tokenize, ne_chunk
 from nltk.tree import Tree
 import undetected_chromedriver as uc
+from urllib.parse import quote_plus
 
-# NLTK downloads
 for res in ['punkt', 'wordnet', 'stopwords', 'averaged_perceptron_tagger', 'maxent_ne_chunker', 'words']:
     nltk.download(res, quiet=True)
 
-# Configuration
 CONFIG = {
     'NUM_RESULTS': 100,
     'MAX_PARAS_PER_SITE': 2,
@@ -25,14 +23,12 @@ CONFIG = {
     'MIN_KEYWORD_MATCH_RATIO': 0.7
 }
 
-# Skip sets
 SKIP_RESPONSES = {
     "[Info] No relevant content found on this page.",
     "[Info] Failed to fetch or parse the page.",
 }
 SKIP_PATTERNS = [r"cloudflare", r"access denied", r"captcha", r"404 error", r"subscribe", r"register", r"advertisement"]
 
-# Text processing
 def clean_text(text):
     for pattern in SKIP_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
@@ -77,19 +73,16 @@ def extract_relevant_paragraphs(soup, query, lemmatizer, stop_words):
     candidates.sort(key=lambda x: (not x[0], -x[1]))
     return [x[2] for x in candidates[:CONFIG['MAX_PARAS_PER_SITE']] if is_meaningful_text(x[2], query_keywords, lemmatizer, stop_words)]
 
-# Search
 def search_google_urls(query, driver):
-    driver.get(f"https://www.bing.com/search?q={query.replace(' ', '+')}")
+    driver.get(f"https://www.bing.com/search?q={quote_plus(query)}")
     time.sleep(3)
     soup = BeautifulSoup(driver.page_source, 'html.parser')
-    return [a['href'] for a in soup.select('li.b_algo h2 a') if a['href'].startswith('http')][:CONFIG['NUM_RESULTS']]
+    return [a['href'] for a in soup.select('li.b_algo h2 a') if a.get('href', '').startswith('http')][:CONFIG['NUM_RESULTS']]
 
-# Named entity extraction
 def extract_named_entities(query):
     chunked = ne_chunk(pos_tag(word_tokenize(query)))
     return [" ".join(leaf[0] for leaf in subtree.leaves()).lower() for subtree in chunked if isinstance(subtree, Tree)]
 
-# Topic normalization
 def normalize_topic_name(query, stop_words):
     query = query.lower().strip().rstrip('?')
     lemmatizer = WordNetLemmatizer()
@@ -99,24 +92,31 @@ def normalize_topic_name(query, stop_words):
     for entity in entities:
         slug = entity.replace(' ', '_')
         for topic in existing_topics:
-            if slug in topic: return topic
+            if slug == topic or slug in topic or topic in slug:
+                return topic
         return slug
 
     nouns = [w for w, pos in pos_tag(word_tokenize(query)) if pos.startswith('NN') and w not in stop_words]
     if nouns:
-        return '_'.join(sorted(set(lemmatizer.lemmatize(w) for w in nouns)))
+        base = '_'.join(sorted(set(lemmatizer.lemmatize(w) for w in nouns)))
+        for topic in existing_topics:
+            if base == topic or base in topic or topic in base:
+                return topic
+        return base
 
     fallback = [w for w in re.findall(r'\b[a-z]+\b', query) if w not in stop_words]
-    return '_'.join(fallback[:3]) or 'general'
+    slug = '_'.join(fallback[:3]) or 'general'
+    for topic in existing_topics:
+        if slug == topic or slug in topic or topic in slug:
+            return topic
+    return slug
 
-# Main chatbot class
 class DocChatBot:
     def __init__(self):
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words('english'))
         self.query_data = {}
         os.makedirs("data", exist_ok=True)
-
         options = uc.ChromeOptions()
         if CONFIG['HEADLESS']: options.add_argument('--headless=new')
         options.add_argument('--no-sandbox')
@@ -124,25 +124,6 @@ class DocChatBot:
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_argument("user-agent=Mozilla/5.0 ... Chrome/115.0.0.0 Safari/537.36")
         self.driver = uc.Chrome(options=options)
-        self.driver.set_page_load_timeout(15)
-
-    def __del__(self):
-        try: self.driver.quit()
-        except: pass
-
-    def save_to_topic_json(self, question, answer):
-        topic = normalize_topic_name(question, self.stop_words)
-        path = os.path.join("data", f"{topic}.json")
-        if os.path.exists(path):
-            with open(path, 'r', encoding='utf-8') as f: data = json.load(f)
-        else: data = {}
-
-        q_key = question.strip().lower()
-        if q_key not in data: data[q_key] = []
-        if answer not in data[q_key]:
-            data[q_key].append(answer)
-            with open(path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
 
     def fetch_with_selenium(self, url):
         try:
@@ -152,8 +133,37 @@ class DocChatBot:
         except:
             return None
 
+    def __del__(self):
+        try: self.driver.quit()
+        except: pass
+
+    def save_to_topic_json(self, question, answer):
+        topic = normalize_topic_name(question, self.stop_words)
+        path = os.path.join("data", f"{topic}.json")
+        data = {"topic": topic, "qas": []}
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                try:
+                    data = json.load(f)
+                except: pass
+        q_key = question.strip().lower()
+        found = False
+        for qa in data["qas"]:
+            if qa["question"].strip().lower() == q_key:
+                found = True
+                if isinstance(qa["answer"], str):
+                    qa["answer"] = [qa["answer"]]
+                if answer.strip() not in qa["answer"]:
+                    qa["answer"].append(answer.strip())
+                break
+        if not found:
+            data["qas"].append({"question": question.strip(), "answer": [answer.strip()]})
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
     def get_next_answer(self, query):
         query = query.strip().lower()
+        query_keywords = lemmatize_words(query, self.lemmatizer, self.stop_words)
         if query not in self.query_data:
             urls = search_google_urls(query, self.driver)
             if not urls:
@@ -161,16 +171,13 @@ class DocChatBot:
                 self.save_to_topic_json(query, answer)
                 return answer
             self.query_data[query] = {'urls': urls, 'answers_per_url': {}, 'url_index': 0, 'answer_index': 0, 'failed_urls': set()}
-
         data = self.query_data[query]
         urls = data['urls']
-
         for _ in range(len(urls)):
             url = urls[data['url_index']]
             if url in data['failed_urls']:
                 data['url_index'] = (data['url_index'] + 1) % len(urls)
                 continue
-
             if url not in data['answers_per_url']:
                 soup = self.fetch_with_selenium(url)
                 if not soup:
@@ -183,7 +190,6 @@ class DocChatBot:
                     data['url_index'] = (data['url_index'] + 1) % len(urls)
                     continue
                 data['answers_per_url'][url] = answers
-
             answers = data['answers_per_url'][url]
             while data['answer_index'] < len(answers):
                 ans = answers[data['answer_index']]
@@ -191,10 +197,17 @@ class DocChatBot:
                 if ans not in SKIP_RESPONSES and clean_text(ans):
                     self.save_to_topic_json(query, ans)
                     return ans
-
             data['answer_index'] = 0
             data['url_index'] = (data['url_index'] + 1) % len(urls)
-
+        if data['answers_per_url']:
+            best = max(
+                (para for paras in data['answers_per_url'].values() for para in paras),
+                key=lambda p: len(set(word_tokenize(p.lower())) & query_keywords),
+                default=None
+            )
+            if best:
+                self.save_to_topic_json(query, best)
+                return best
         fallback = "[Info] No accurate and relevant content found. Try rephrasing your question."
         self.save_to_topic_json(query, fallback)
         return fallback
@@ -209,7 +222,6 @@ class DocChatBot:
             response = self.get_next_answer(user_input)
             print(f"AI Bot: {response}")
 
-# Run the bot
 if __name__ == "__main__":
     bot = DocChatBot()
     bot.chat()
