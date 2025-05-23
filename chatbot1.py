@@ -11,6 +11,7 @@ from nltk.tree import Tree
 import undetected_chromedriver as uc
 from urllib.parse import quote_plus
 
+#hii
 for res in ['punkt', 'wordnet', 'stopwords', 'averaged_perceptron_tagger', 'maxent_ne_chunker', 'words']:
     nltk.download(res, quiet=True)
 
