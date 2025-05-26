@@ -1,172 +1,360 @@
 import nltk
-import string
 import re
-import requests
+import time
+import json
+import os
 from bs4 import BeautifulSoup
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
+from nltk import pos_tag, word_tokenize, ne_chunk
+from nltk.tree import Tree
+import undetected_chromedriver as uc
+from urllib.parse import quote_plus
+from selenium.common.exceptions import InvalidSessionIdException, WebDriverException
 
-# Download required NLTK resources
-for res in ['punkt', 'wordnet', 'stopwords']:
-    nltk.download(res, quiet=True)
+nltk.download('maxent_ne_chunker_tab')
+nltk.download('words')
+nltk.download('averaged_perceptron_tagger')
+nltk.download('punkt')
 
 CONFIG = {
-    'NUM_RESULTS': 10,
+    'NUM_RESULTS': 200,
     'MAX_PARAS_PER_SITE': 2,
-    'MIN_TEXT_LENGTH': 80,
-    'ALPHA_RATIO': 0.8,
-    'REQUEST_TIMEOUT': 5,
-    'HEADERS': {
-        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/91.0.4472.124 Safari/537.36")
-    }
+    'MIN_TEXT_LENGTH': 70,
+    'ALPHA_RATIO': 0.7,
+    'HEADLESS': False,
+    'MIN_KEYWORD_MATCH_RATIO': 0.7,
+    'MAX_RETRIES': 3,
+    'RETRY_DELAY': 2
 }
 
+SKIP_RESPONSES = {
+    "[Info] No relevant content found on this page.",
+    "[Info] Failed to fetch or parse the page.",
+}
+SKIP_PATTERNS = [r"cloudflare", r"access denied", r"captcha", r"404 error", r"subscribe", r"register", r"advertisement"]
+
 def clean_text(text):
-    """Remove irrelevant web UI content."""
-    patterns = [
-        r"(?i)new customers get.*free credits",
-        r"(?i)subscribe.*newsletter",
-        r"(?i)cookie[s]?",
-        r"(?i)advertisement",
-        r"(?i)accept.*cookie",
-        r"(?i)sign up",
-        r"(?i)buy now",
-        r"(?i)learn more",
-        r"\bterms\b.*\bprivacy\b",
-        r"(?i)breaking news.*",
-        r"(?i)choose your reason.*",
-        r"(?i)read.*more.*on.*app"
-    ]
-    for pattern in patterns:
-        if re.search(pattern, text):
+    for pattern in SKIP_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
             return ""
     return text
 
 def clean_answer_text(text):
-    """Remove citations and normalize whitespace."""
-    text = re.sub(r'\[[^\]]*\]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+    return re.sub(r'\s+', ' ', re.sub(r'\[[^\]]*\]', '', text)).strip()
 
-def is_meaningful_text(text, query_keywords):
-    if not text or len(text) < CONFIG['MIN_TEXT_LENGTH']:
-        return False
-    if not any(word in text.lower() for word in query_keywords):
-        return False
+def lemmatize_words(text, lemmatizer, stop_words):
+    return set(lemmatizer.lemmatize(w) for w in word_tokenize(text.lower()) if w.isalpha() and w not in stop_words)
+
+def is_meaningful_text(text, query_keywords, lemmatizer, stop_words):
+    if len(text) < CONFIG['MIN_TEXT_LENGTH']: return False
+    lemmas = lemmatize_words(text, lemmatizer, stop_words)
+    overlap = query_keywords & lemmas
     alpha_ratio = sum(c.isalpha() for c in text) / max(len(text), 1)
-    return alpha_ratio > CONFIG['ALPHA_RATIO']
+    return len(overlap) / max(len(query_keywords), 1) >= CONFIG['MIN_KEYWORD_MATCH_RATIO'] and alpha_ratio > CONFIG['ALPHA_RATIO']
 
 def is_definition_like(text, query):
     query = query.lower().strip().rstrip('?')
     terms = [query]
-    if query.startswith('what is '):
-        terms.append(query.replace('what is ', '').strip())
+    if query.startswith(('what is ', 'who is ')):
+        terms.append(query.split(' ', 2)[-1])
     for term in terms:
-        if re.match(rf"{re.escape(term)}\s+(is|refers to|means|are)\b", text.lower()):
+        if re.match(rf"^{re.escape(term)}\s+(is|was|are|refers to|means|can be defined as|is known as)\b", text.lower()):
             return True
     return False
 
-def extract_relevant_paragraphs(soup, query, max_paras=CONFIG['MAX_PARAS_PER_SITE']):
-    """Extract meaningful paragraphs prioritizing definitions."""
-    query_keywords = set(query.lower().split())
-    paragraphs = []
+def extract_relevant_paragraphs(soup, query, lemmatizer, stop_words):
+    query_keywords = lemmatize_words(query, lemmatizer, stop_words)
+    candidates = []
     for para in soup.find_all('p'):
-        raw_text = para.get_text(separator=' ', strip=True)
-        raw_text = clean_text(raw_text)
-        if not raw_text:
-            continue
-        if is_definition_like(raw_text, query) or is_meaningful_text(raw_text, query_keywords):
-            cleaned = clean_answer_text(raw_text)
-            paragraphs.append(cleaned)
-        if len(paragraphs) >= max_paras:
-            break
-    return paragraphs
+        text = clean_text(para.get_text(separator=' ', strip=True))
+        if not text: continue
+        text = clean_answer_text(text)
+        if text in SKIP_RESPONSES or len(text.split()) < 10: continue
+        lemmas = lemmatize_words(text, lemmatizer, stop_words)
+        overlap = len(query_keywords & lemmas)
+        is_def = is_definition_like(text, query)
+        candidates.append((is_def, overlap, text))
+    candidates.sort(key=lambda x: (not x[0], -x[1]))
+    return [x[2] for x in candidates[:CONFIG['MAX_PARAS_PER_SITE']] if is_meaningful_text(x[2], query_keywords, lemmatizer, stop_words)]
 
-def search_google_urls(query, num_results=CONFIG['NUM_RESULTS']):
-    try:
-        from googlesearch import search
-    except ImportError:
-        return []
-    try:
-        urls = list(search(query, num_results=num_results))
-        return urls
-    except Exception:
-        return []
+def search_google_urls(query, driver):
+    for attempt in range(CONFIG['MAX_RETRIES']):
+        try:
+            driver.get(f"https://www.bing.com/search?q={quote_plus(query)}")
+            time.sleep(3)
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            return [a['href'] for a in soup.select('li.b_algo h2 a') if a.get('href', '').startswith('http')][:CONFIG['NUM_RESULTS']]
+        except (InvalidSessionIdException, WebDriverException) as e:
+            print(f"[Error] Failed to fetch search results (attempt {attempt + 1}/{CONFIG['MAX_RETRIES']}): {str(e)}")
+            if attempt < CONFIG['MAX_RETRIES'] - 1:
+                time.sleep(CONFIG['RETRY_DELAY'])
+            continue
+    return []
+
+def extract_named_entities(query):
+    chunked = ne_chunk(pos_tag(word_tokenize(query)))
+    return [" ".join(leaf[0] for leaf in subtree.leaves()).lower() for subtree in chunked if isinstance(subtree, Tree)]
+
+def normalize_topic_name(query, stop_words):
+    query = query.lower().strip().rstrip('?')
+    if not query:
+        return "general"
+    lemmatizer = WordNetLemmatizer()
+    entities = extract_named_entities(query)
+    existing_topics = [f[:-5] for f in os.listdir('data') if f.endswith('.json')]
+
+    for entity in entities:
+        slug = entity.replace(' ', '_')
+        for topic in existing_topics:
+            if slug == topic or slug in topic or topic in slug:
+                return topic
+        return slug
+
+    nouns = [w for w, pos in pos_tag(word_tokenize(query)) if pos.startswith('NN') and w not in stop_words]
+    if nouns:
+        base = '_'.join(sorted(set(lemmatizer.lemmatize(w) for w in nouns)))
+        for topic in existing_topics:
+            if base == topic or base in topic or topic in base:
+                return topic
+        return base
+
+    fallback = [w for w in re.findall(r'\b[a-z]+\b', query) if w not in stop_words]
+    slug = '_'.join(fallback[:3]) or 'general'
+    for topic in existing_topics:
+        if slug == topic or slug in topic or topic in slug:
+            return topic
+    return slug
+
 
 class DocChatBot:
     def __init__(self):
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words('english'))
         self.query_data = {}
+        self.history = []
+        self.question_history = {}
+        os.makedirs("data", exist_ok=True)
+        self.driver = None
+        self.initialize_driver()
 
-    def get_next_answer(self, query):
-        query = query.strip().lower()
-        if query not in self.query_data:
-            # First time: get URLs
-            urls = search_google_urls(query)
-            if not urls:
-                return "[Error] Could not fetch search results. Check internet or install googlesearch-python."
-            self.query_data[query] = {
-                'urls': urls,
-                'answers_per_url': {},
-                'url_index': 0,
-                'answer_index': 0,
-            }
-        data = self.query_data[query]
-        urls = data['urls']
-        if not urls:
-            return "[Info] No search results found."
+    def initialize_driver(self):
+        try:
+            options = uc.ChromeOptions()
+            if CONFIG['HEADLESS']:
+                options.add_argument('--headless=new')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+            self.driver = uc.Chrome(options=options, version_main=136)
+        except Exception as e:
+            print(f"[Error] Failed to initialize WebDriver: {str(e)}")
+            self.driver = None
 
-        # Cycle through URLs
-        attempts = 0
-        while attempts < len(urls):
-            current_url = urls[data['url_index']]
-            if current_url not in data['answers_per_url']:
-                # Fetch and parse answers from this url
-                try:
-                    response = requests.get(current_url, headers=CONFIG['HEADERS'], timeout=CONFIG['REQUEST_TIMEOUT'])
-                    soup = BeautifulSoup(response.content, 'html.parser')
-                    answers = extract_relevant_paragraphs(soup, query)
-                    if not answers:
-                        answers = ["[Info] No relevant content found on this page."]
-                except Exception:
-                    answers = ["[Info] Failed to fetch or parse the page."]
-                data['answers_per_url'][current_url] = answers
-
-            answers = data['answers_per_url'][current_url]
-            if not answers:
-                # No answers here, move on
-                data['url_index'] = (data['url_index'] + 1) % len(urls)
-                data['answer_index'] = 0
-                attempts += 1
+    def fetch_with_selenium(self, url):
+        if not self.driver:
+            self.initialize_driver()
+            if not self.driver:
+                return None
+        for attempt in range(CONFIG['MAX_RETRIES']):
+            try:
+                self.driver.get(url)
+                time.sleep(3)
+                return BeautifulSoup(self.driver.page_source, 'html.parser')
+            except (InvalidSessionIdException, WebDriverException) as e:
+                print(f"[Error] Failed to fetch {url} (attempt {attempt + 1}/{CONFIG['MAX_RETRIES']}): {str(e)}")
+                if attempt < CONFIG['MAX_RETRIES'] - 1:
+                    time.sleep(CONFIG['RETRY_DELAY'])
+                    self.initialize_driver()
                 continue
+        return None
 
-            # Provide next answer from current url
-            answer = answers[data['answer_index'] % len(answers)]
-            data['answer_index'] += 1
+    def save_to_topic_json(self, question, answer, topic):
+        path = os.path.join("data", f"{topic}.json")
+        data = {"qas": []}
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception as e:
+                print(f"[Error] Failed to read {path}: {str(e)}")
+        data["qas"].append({"question": question, "answer": answer})
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[Error] Failed to save to {path}: {str(e)}")
 
-            # If we exhausted answers on this url, move to next url for next time
-            if data['answer_index'] >= len(answers):
-                data['answer_index'] = 0
-                data['url_index'] = (data['url_index'] + 1) % len(urls)
+    def __del__(self):
+        if hasattr(self, 'driver') and self.driver:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+            self.driver = None
 
-            return answer
+    def get_next_answer(self, query, continue_topic=None):
+        query = query.strip().lower()
+        if not query:
+            return "[Error] Empty query provided."
+        
+        topic = continue_topic if continue_topic else normalize_topic_name(query, self.stop_words)
+        
+        if topic not in self.history:
+            self.history.append(topic)
+            if len(self.history) > 2:
+                self.history.pop(0)
+        
+        if topic not in self.question_history:
+            self.question_history[topic] = []
 
-        return "[Info] No accurate and relevant content found. Try rephrasing your question."
+        path = os.path.join("data", f"{topic}.json")
+        query_keywords = lemmatize_words(query, self.lemmatizer, self.stop_words)
+        if continue_topic and os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data_json = json.load(f)
+                    for qa in data_json["qas"]:
+                        qa_key = qa["question"].strip().lower()
+                        qa_keywords = lemmatize_words(qa_key, self.lemmatizer, self.stop_words)
+                        if len(query_keywords & qa_keywords) / max(len(query_keywords), 1) >= CONFIG['MIN_KEYWORD_MATCH_RATIO']:
+                            answers = qa["answer"] if isinstance(qa["answer"], list) else [qa["answer"]]
+                            if query not in self.query_data:
+                                self.query_data[query] = {'answers': answers, 'answer_index': 0}
+                            data_query = self.query_data[query]
+                            if data_query['answer_index'] < len(answers):
+                                ans = answers[data_query['answer_index']]
+                                data_query['answer_index'] += 1
+                                if ans not in SKIP_RESPONSES and clean_text(ans):
+                                    self.save_to_topic_json(query, ans, topic)
+                                    return ans
+                            data_query['answer_index'] = 0
+            except Exception as e:
+                print(f"[Error] Failed to read {path}: {str(e)}")
+
+        if query not in self.query_data:
+            urls = search_google_urls(query, self.driver)
+            if not urls:
+                self.save_to_topic_json(query, "[Error] Could not fetch search results.", topic)
+                return "[Error] Could not fetch search results."
+            self.query_data[query] = {'urls': urls, 'answers_per_url': {}, 'url_index': 0, 'answer_index': 0, 'failed_urls': set()}
+
+        data_query = self.query_data[query]
+        urls = data_query['urls']
+        
+        for _ in range(len(urls)):
+            url = urls[data_query['url_index']]
+            if url in data_query['failed_urls']:
+                data_query['url_index'] = (data_query['url_index'] + 1) % len(urls)
+                continue
+            if url not in data_query['answers_per_url']:
+                soup = self.fetch_with_selenium(url)
+                if not soup:
+                    data_query['failed_urls'].add(url)
+                    data_query['url_index'] = (data_query['url_index'] + 1) % len(urls)
+                    continue
+                answers = extract_relevant_paragraphs(soup, query, self.lemmatizer, self.stop_words)
+                if not answers:
+                    data_query['failed_urls'].add(url)
+                    data_query['url_index'] = (data_query['url_index'] + 1) % len(urls)
+                    continue
+                data_query['answers_per_url'][url] = answers
+
+            answers = data_query['answers_per_url'][url]
+            while data_query['answer_index'] < len(answers):
+                ans = answers[data_query['answer_index']]
+                data_query['answer_index'] += 1
+                if ans not in SKIP_RESPONSES and clean_text(ans):
+                    self.save_to_topic_json(query, ans, topic)
+                    self.question_history[topic].append({'question': query, 'last_answer_index': data_query['answer_index'] - 1})
+                    return ans
+
+            data_query['answer_index'] = 0
+            data_query['url_index'] = (data_query['url_index'] + 1) % len(urls)
+
+        if data_query['answers_per_url']:
+            best = max(
+                (para for paras in data_query['answers_per_url'].values() for para in paras),
+                key=lambda p: len(set(word_tokenize(p.lower())) & query_keywords),
+                default=None
+            )
+            if best:
+                self.save_to_topic_json(query, best, topic)
+                self.question_history[topic].append({'question': query, 'last_answer_index': 0})
+                return best
+
+        self.question_history[topic].append({'question': query, 'last_answer_index': 0})
+        if continue_topic:
+            return f"[Error] No more relevant content found for '{query}' in topic '{topic}'. Try rephrasing or resetting the search."
+        self.query_data[query] = {'urls': search_google_urls(query, self.driver), 'answers_per_url': {}, 'url_index': 0, 'answer_index': 0, 'failed_urls': set()}
+        return self.get_next_answer(query, continue_topic)
 
     def chat(self):
-        print("Welcome to the Smart ChatBot!")
-        print("Type 'exit' or 'quit' to stop.")
-        while True:
-            user_input = input("You: ").strip()
-            if user_input.lower() in ['exit', 'quit']:
-                print("AI Bot: Goodbye!")
-                break
-            response = self.get_next_answer(user_input)
-            print(f"AI Bot: {response}")
+        print("Welcome to the Smart ChatBot!\nType 'exit' to quit.\nType 'continue' or 'last' to resume a recent topic.\nType 'reset search' to restart the search for the last question.")
+        try:
+            while True:
+                user_input = input("You: ").strip()
+                if user_input.lower() in ['exit', 'quit']:
+                    print("AI Bot: Goodbye!")
+                    break
+                if not user_input:
+                    print("AI Bot: Please enter a question or topic to continue.")
+                    continue
+
+                continue_topic = None
+                if re.search(r'\bcontinue\s+last\s+question\b', user_input.lower()):
+                    if self.history and self.question_history.get(self.history[-1]):
+                        topic = self.history[-1]
+                        last_q = self.question_history[topic][-1]['question']
+                        print(f"AI Bot: Continuing from question '{last_q}' in topic '{topic}'...")
+                        response = self.get_next_answer(last_q, topic)
+                        print(f"AI Bot: {response}")
+                    else:
+                        print("AI Bot: No previous question in this topic.")
+                    continue
+                elif user_input.lower() == 'reset search':
+                    if self.history and self.question_history.get(self.history[-1]):
+                        topic = self.history[-1]
+                        last_q = self.question_history[topic][-1]['question']
+                        self.query_data.pop(last_q, None)
+                        print(f"AI Bot: Reset search for '{last_q}'...")
+                        response = self.get_next_answer(last_q, topic)
+                        print(f"AI Bot: {response}")
+                    else:
+                        print("AI Bot: No previous question to reset.")
+                    continue
+                elif re.search(r'\b(continue|last|previous|go back)\b', user_input.lower()):
+                    if len(self.history) >= 1 and re.search(r'\b(last|previous)\s*(topic|content|question|one)?\b', user_input.lower()):
+                        continue_topic = self.history[-1]
+                        if self.question_history.get(continue_topic):
+                            last_q = self.question_history[continue_topic][-1]['question']
+                            print(f"AI Bot: Resuming topic '{continue_topic}' with question '{last_q}'...")
+                            response = self.get_next_answer(last_q, continue_topic)
+                        else:
+                            print(f"AI Bot: No questions found for topic '{continue_topic}'. Please ask a new question.")
+                            continue
+                    elif len(self.history) >= 2 and re.search(r'\b(second\s*(last|previous)|before\s*last)\b', user_input.lower()):
+                        continue_topic = self.history[-2]
+                        if self.question_history.get(continue_topic):
+                            last_q = self.question_history[continue_topic][-1]['question']
+                            print(f"AI Bot: Resuming topic '{continue_topic}' with question '{last_q}'...")
+                            response = self.get_next_answer(last_q, continue_topic)
+                        else:
+                            print(f"AI Bot: No questions found for topic '{continue_topic}'. Please ask a new question.")
+                            continue
+                    else:
+                        print("AI Bot: No recent topics to continue. Please ask a new question.")
+                        continue
+                else:
+                    response = self.get_next_answer(user_input, continue_topic)
+                print(f"AI Bot: {response}")
+
+        except KeyboardInterrupt:
+            print("\nAI Bot: Interrupted by user. Exiting...")
+        finally:
+            self.__del__()
 
 if __name__ == "__main__":
-    chatbot = DocChatBot()
-    chatbot.chat()
+    bot = DocChatBot()
+    bot.chat()
