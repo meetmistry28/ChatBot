@@ -1,203 +1,349 @@
-import json
 import nltk
-import string
+import re
+import time
+import json
+import os
+from bs4 import BeautifulSoup
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
+from nltk import pos_tag, word_tokenize, ne_chunk
+from nltk.tree import Tree
+import undetected_chromedriver as uc
+from urllib.parse import quote_plus
+from selenium.common.exceptions import InvalidSessionIdException, WebDriverException
 
-# Download required resources
-for res in ['punkt', 'wordnet', 'stopwords']:
-    nltk.download(res, quiet=True)
+nltk.download('maxent_ne_chunker_tab')
+nltk.download('words')
+nltk.download('averaged_perce、有n_tagger')
+nltk.download('punkt')
+
+CONFIG = {
+    'NUM_RESULTS': 200,
+    'MAX_PARAS_PER_SITE': 2,
+    'MIN_TEXT_LENGTH': 70,
+    'ALPHA_RATIO': 0.7,
+    'HEADLESS': False,
+    'MIN_KEYWORD_MATCH_RATIO': 0.7,
+    'MAX_RETRIES': 3,  # Added for retry logic
+    'RETRY_DELAY': 2  # Seconds to wait between retries
+}
+
+SKIP_RESPONSES = {
+    "[Info] No relevant content found on this page.",
+    "[Info] Failed to fetch or parse the page.",
+}
+SKIP_PATTERNS = [r"cloudflare", r"access denied", r"captcha", r"404 error", r"subscribe", r"register", r"advertisement"]
+
+def clean_text(text):
+    for pattern in SKIP_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return ""
+    return text
+
+def clean_answer_text(text):
+    return re.sub(r'\s+', ' ', re.sub(r'\[[^\]]*\]', '', text)).strip()
+
+def lemmatize_words(text, lemmatizer, stop_words):
+    return set(lemmatizer.lemmatize(w) for w in word_tokenize(text.lower()) if w.isalpha() and w not in stop_words)
+
+def is_meaningful_text(text, query_keywords, lemmatizer, stop_words):
+    if len(text) < CONFIG['MIN_TEXT_LENGTH']: return False
+    lemmas = lemmatize_words(text, lemmatizer, stop_words)
+    overlap = query_keywords & lemmas
+    alpha_ratio = sum(c.isalpha() for c in text) / max(len(text), 1)
+    return len(overlap) / max(len(query_keywords), 1) >= CONFIG['MIN_KEYWORD_MATCH_RATIO'] and alpha_ratio > CONFIG['ALPHA_RATIO']
+
+def is_definition_like(text, query):
+    query = query.lower().strip().rstrip('?')
+    terms = [query]
+    if query.startswith(('what is ', 'who is ')):
+        terms.append(query.split(' ', 2)[-1])
+    for term in terms:
+        if re.match(rf"^{re.escape(term)}\s+(is|was|are|refers to|means|can be defined as|is known as)\b", text.lower()):
+            return True
+    return False
+
+def extract_relevant_paragraphs(soup, query, lemmatizer, stop_words):
+    query_keywords = lemmatize_words(query, lemmatizer, stop_words)
+    candidates = []
+    for para in soup.find_all('p'):
+        text = clean_text(para.get_text(separator=' ', strip=True))
+        if not text: continue
+        text = clean_answer_text(text)
+        if text in SKIP_RESPONSES or len(text.split()) < 10: continue
+        lemmas = lemmatize_words(text, lemmatizer, stop_words)
+        overlap = len(query_keywords & lemmas)
+        is_def = is_definition_like(text, query)
+        candidates.append((is_def, overlap, text))
+    candidates.sort(key=lambda x: (not x[0], -x[1]))
+    return [x[2] for x in candidates[:CONFIG['MAX_PARAS_PER_SITE']] if is_meaningful_text(x[2], query_keywords, lemmatizer, stop_words)]
+
+def search_google_urls(query, driver):
+    for attempt in range(CONFIG['MAX_RETRIES']):
+        try:
+            driver.get(f"https://www.bing.com/search?q={quote_plus(query)}")
+            time.sleep(3)
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            return [a['href'] for a in soup.select('li.b_algo h2 a') if a.get('href', '').startswith('http')][:CONFIG['NUM_RESULTS']]
+        except (InvalidSessionIdException, WebDriverException) as e:
+            print(f"[Error] Failed to fetch search results (attempt {attempt + 1}/{CONFIG['MAX_RETRIES']}): {str(e)}")
+            if attempt < CONFIG['MAX_RETRIES'] - 1:
+                time.sleep(CONFIG['RETRY_DELAY'])
+            continue
+    return []
+
+def extract_named_entities(query):
+    chunked = ne_chunk(pos_tag(word_tokenize(query)))
+    return [" ".join(leaf[0] for leaf in subtree.leaves()).lower() for subtree in chunked if isinstance(subtree, Tree)]
+
+def normalize_topic_name(query, stop_words):
+    query = query.lower().strip().rstrip('?')
+    if not query:
+        return "general"
+    lemmatizer = WordNetLemmatizer()
+    entities = extract_named_entities(query)
+    existing_topics = [f[:-5] for f in os.listdir('data') if f.endswith('.json')]
+
+    for entity in entities:
+        slug = entity.replace(' ', '_')
+        for topic in existing_topics:
+            if slug == topic or slug in topic or topic in slug:
+                return topic
+        return slug
+
+    nouns = [w for w, pos in pos_tag(word_tokenize(query)) if pos.startswith('NN') and w not in stop_words]
+    if nouns:
+        base = '_'.join(sorted(set(lemmatizer.lemmatize(w) for w in nouns)))
+        for topic in existing_topics:
+            if base == topic or base in topic or topic in base:
+                return topic
+        return base
+
+    fallback = [w for w in re.findall(r'\b[a-z]+\b', query) if w not in stop_words]
+    slug = '_'.join(fallback[:3]) or 'general'
+    for topic in existing_topics:
+        if slug == topic or slug in topic or topic in slug:
+            return topic
+    return slug
 
 class DocChatBot:
-    def __init__(self, file_paths, history_file="history.json"):
-        self.file_paths = file_paths
-        self.history_file = history_file
+    def __init__(self):
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words('english'))
-        self.paragraph_data = self._read_json_files()
-        self.query_memory = {}
-        self.universal_keywords = ['vijay', 'lana']  # Universal keywords (fallback)
-        self.specific_keywords = ['akshay', 'ai']  # Predefined specific keywords
-        self._build_keyword_set()
-        self._initialize_history()
+        self.query_data = {}
+        self.history = []  # Track last two topics
+        self.question_history = {}  # Keeps track of questions and their last_answer_index
+        os.makedirs("data", exist_ok=True)
+        self.driver = None
+        self.initialize_driver()
 
-    def _initialize_history(self):
-        """Initialize history file if it doesn't exist."""
+    def initialize_driver(self):
         try:
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                json.load(f)  # Verify file is valid JSON
-        except (FileNotFoundError, json.JSONDecodeError):
-            with open(self.history_file, 'w', encoding='utf-8') as f:
-                json.dump([], f)
+            options = uc.ChromeOptions()
+            if CONFIG['HEADLESS']:
+                options.add_argument('--headless=new')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
+            self.driver = uc.Chrome(options=options, version_main=136)
+        except Exception as e:
+            print(f"[Error] Failed to initialize WebDriver: {str(e)}")
+            self.driver = None
 
-    def _save_history(self, question, answer):
-        """Append question and answer to history JSON file."""
-        try:
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                history = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            history = []
-
-        history.append({"question": question, "answer": answer})
-        with open(self.history_file, 'w', encoding='utf-8') as f:
-            json.dump(history, f, indent=4)
-
-    def _read_json_files(self):
-        """Read content from JSON files."""
-        paragraph_data = []
-        for file_path in self.file_paths:
+    def fetch_with_selenium(self, url):
+        if not self.driver:
+            self.initialize_driver()
+            if not self.driver:
+                return None
+        for attempt in range(CONFIG['MAX_RETRIES']):
             try:
-                with open(file_path, 'r', encoding='utf-8') as file:
-                    data = json.load(file)
-            except FileNotFoundError:
-                print(f"Warning: File {file_path} not found.")
+                self.driver.get(url)
+                time.sleep(3)
+                return BeautifulSoup(self.driver.page_source, 'html.parser')
+            except (InvalidSessionIdException, WebDriverException) as e:
+                print(f"[Error] Failed to fetch {url} (attempt {attempt + 1}/{CONFIG['MAX_RETRIES']}): {str(e)}")
+                if attempt < CONFIG['MAX_RETRIES'] - 1:
+                    time.sleep(CONFIG['RETRY_DELAY'])
+                    self.initialize_driver()  # Reinitialize driver on failure
                 continue
-
-            for header, content_dict in data.items():
-                content = ''
-                for key, value in content_dict.items():
-                    if isinstance(value, str) and value.strip():
-                        content = value
-                        break
-                    elif isinstance(value, (list, dict)):
-                        content = str(value)
-                        break
-
-                if content:
-                    paragraph_data.append({
-                        'bold': header,
-                        'content': content,
-                        'source': file_path
-                    })
-
-        return paragraph_data
-
-    def _preprocess_text(self, text):
-        """Preprocess text by tokenizing, lemmatizing, and removing stopwords/punctuation."""
-        text = text.lower()
-        tokens = nltk.word_tokenize(text)
-        filtered = [
-            self.lemmatizer.lemmatize(t)
-            for t in tokens
-            if t not in string.punctuation and t not in self.stop_words
-        ]
-        return filtered
-
-    def _build_keyword_set(self):
-        """Build set of specific keywords from JSON headers."""
-        for p in self.paragraph_data:
-            tokens = self._preprocess_text(p['bold'])
-            self.specific_keywords.extend([t for t in tokens if t not in self.universal_keywords])
-        self.specific_keywords = list(set(self.specific_keywords))  # Remove duplicates
-
-    def _find_main_topic(self, query):
-        """Identify the main keyword, prioritizing specific keywords over universal ones."""
-        query_tokens = set(self._preprocess_text(query))
-        
-        # Check specific keywords first
-        for kw in self.specific_keywords:
-            if kw in query_tokens:
-                for p in self.paragraph_data:
-                    header_tokens = set(self._preprocess_text(p['bold']))
-                    if kw in header_tokens:
-                        return kw
-
-        # Fallback to universal keywords
-        for kw in self.universal_keywords:
-            if kw in query_tokens:
-                for p in self.paragraph_data:
-                    header_tokens = set(self._preprocess_text(p['bold']))
-                    if kw in header_tokens:
-                        return kw
-
-        # If no keyword matches, try universal keywords without query match
-        for kw in self.universal_keywords:
-            for p in self.paragraph_data:
-                header_tokens = set(self._preprocess_text(p['bold']))
-                if kw in header_tokens:
-                    return kw
-
         return None
 
-    def get_response(self, query):
-        """Generate response for the query and save to history."""
-        main_keyword = self._find_main_topic(query)
-        if not main_keyword:
-            response = "Sorry, I couldn't identify the main topic. Please include a relevant topic like 'Akshay', 'AI', 'biography', or 'arjun reddy'."
-            self._save_history(query, response)
-            return response
+    def save_to_topic_json(self, question, answer, topic):
+        path = os.path.join("data", f"{topic}.json")
+        data = {"qas": []}
+        if os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception as e:
+                print(f"[Error] Failed to read {path}: {str(e)}")
+        data["qas"].append({"question": question, "answer": answer})
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[Error] Failed to save to {path}: {str(e)}")
 
-        # Find paragraph with the keyword in the header
-        matched_paragraph = None
-        for p in self.paragraph_data:
-            header_tokens = set(self._preprocess_text(p['bold']))
-            if main_keyword in header_tokens:
-                matched_paragraph = p
-                break
+    def __del__(self):
+        if hasattr(self, 'driver') and self.driver:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass  # Silently ignore errors during cleanup
+            self.driver = None
 
-        if not matched_paragraph:
-            response = f"Sorry, no information found for '{main_keyword}'."
-            self._save_history(query, response)
-            return response
-
-        sentences = nltk.sent_tokenize(matched_paragraph['content'])
-        if not sentences:
-            response = "No content found under that topic."
-            self._save_history(query, response)
-            return response
-
-        # Create memory key for topic
-        key = matched_paragraph['bold']
-
-        # Setup memory if first time
-        if key not in self.query_memory:
-            self.query_memory[key] = {
-                'sentences': sentences,
-                'index': 0,
-                'last_keyword': None
-            }
-
-        mem = self.query_memory[key]
-
-        # Check if the query uses the same main keyword as last time
-        same_keyword = main_keyword == mem['last_keyword']
+    def get_next_answer(self, query, continue_topic=None):
+        query = query.strip().lower()
+        if not query:
+            return "[Error] Empty query provided."
         
-        # Update last keyword
-        mem['last_keyword'] = main_keyword
+        topic = continue_topic if continue_topic else normalize_topic_name(query, self.stop_words)
+        
+        if topic not in self.history:
+            self.history.append(topic)
+            if len(self.history) > 2:
+                self.history.pop(0)
+        
+        if topic not in self.question_history:
+            self.question_history[topic] = []
 
-        # Try to return relevant sentence for new queries
-        query_keywords = ['salary', 'income', 'earn', 'payment', 'money']
-        query_tokens = self._preprocess_text(query)
-        if not same_keyword:
-            for sent in sentences:
-                sent_tokens = self._preprocess_text(sent)
-                if any(word in sent_tokens for word in query_keywords + query_tokens):
-                    mem['index'] = (mem['sentences'].index(sent) + 1) % len(mem['sentences'])
-                    self._save_history(query, sent)
-                    return sent
+        path = os.path.join("data", f"{topic}.json")
+        query_keywords = lemmatize_words(query, self.lemmatizer, self.stop_words)
+        if continue_topic and os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data_json = json.load(f)
+                    for qa in data_json["qas"]:
+                        qa_key = qa["question"].strip().lower()
+                        qa_keywords = lemmatize_words(qa_key, self.lemmatizer, self.stop_words)
+                        if len(query_keywords & qa_keywords) / max(len(query_keywords), 1) >= CONFIG['MIN_KEYWORD_MATCH_RATIO']:
+                            answers = qa["answer"] if isinstance(qa["answer"], list) else [qa["answer"]]
+                            if query not in self.query_data:
+                                self.query_data[query] = {'answers': answers, 'answer_index': 0}
+                            data_query = self.query_data[query]
+                            if data_query['answer_index'] < len(answers):
+                                ans = answers[data_query['answer_index']]
+                                data_query['answer_index'] += 1
+                                if ans not in SKIP_RESPONSES and clean_text(ans):
+                                    self.save_to_topic_json(query, ans, topic)
+                                    return ans
+                            data_query['answer_index'] = 0
+            except Exception as e:
+                print(f"[Error] Failed to read {path}: {str(e)}")
 
-        # For same keyword, return next sentence in sequence
-        response = mem['sentences'][mem['index']]
-        mem['index'] = (mem['index'] + 1) % len(mem['sentences'])  # Loop back to start
-        self._save_history(query, response)
-        return response
+        if query not in self.query_data:
+            urls = search_google_urls(query, self.driver)
+            if not urls:
+                self.save_to_topic_json(query, "[Error] Could not fetch search results.", topic)
+                # Modified
+                return "[Error] No more relevant content found. Try rephrasing the question or using 'reset search' to start a new search."
+            self.query_data[query] = {'urls': urls, 'answers_per_url': {}, 'url_index': 0, 'answer_index': 0, 'failed_urls': set()}
+
+        data_query = self.query_data[query]
+        urls = data_query['urls']
+        
+        for _ in range(len(urls)):
+            url = urls[data_query['url_index']]
+            if url in data_query['failed_urls']:
+                data_query['url_index'] = (data_query['url_index'] + 1) % len(urls)
+                continue
+            if url not in data_query['answers_per_url']:
+                soup = self.fetch_with_selenium(url)
+                if not soup:
+                    data_query['failed_urls'].add(url)
+                    data_query['url_index'] = (data_query['url_index'] + 1) % len(urls)
+                    continue
+                answers = extract_relevant_paragraphs(soup, query, self.lemmatizer, self.stop_words)
+                if not answers:
+                    data_query['failed_urls'].add(url)
+                    data_query['url_index'] = (data_query['url_index'] + 1) % len(urls)
+                    continue
+                data_query['answers_per_url'][url] = answers
+
+            answers = data_query['answers_per_url'][url]
+            while data_query['answer_index'] < len(answers):
+                ans = answers[data_query['answer_index']]
+                data_query['answer_index'] += 1
+                if ans not in SKIP_RESPONSES and clean_text(ans):
+                    self.save_to_topic_json(query, ans, topic)
+                    self.question_history[topic].append({'question': query, 'last_answer_index': data_query['answer_index'] - 1})
+                    return ans
+
+            data_query['answer_index'] = 0
+            data_query['url_index'] = (data_query['url_index'] + 1) % len(urls)
+
+        if data_query['answers_per_url']:
+            best = max(
+                (para for paras in data_query['answers_per_url'].values() for para in paras),
+                key=lambda p: len(set(word_tokenize(p.lower())) & query_keywords),
+                default=None
+            )
+            if best:
+                self.save_to_topic_json(query, best, topic)
+                self.question_history[topic].append({'question': query, 'last_answer_index': 0})
+                return best
+            
+
+        # Modified
+        self.question_history[topic].append({'question': query, 'last_answer_index': 0})
+        # Retry with a new search if no answers found
+        self.query_data[query] = {'urls': search_google_urls(query, self.driver), 'answers_per_url': {}, 'url_index': 0, 'answer_index': 0, 'failed_urls': set()}
+        return self.get_next_answer(query, continue_topic)
 
     def chat(self):
-        """Run the chatbot in an interactive loop."""
-        print("Welcome to the ChatBot! Ask about Vijay Deverakonda, Lana, Akshay, AI, or specific topics like 'biography', 'arjun reddy', 'salary'.")
-        print("Type 'exit' or 'quit' to stop.")
-        print("You: ", end="", flush=True)
-        while True:
-            user_input = input().strip()
-            if user_input.lower() in ['exit', 'quit']:
-                print("AI Bot: Goodbye!")
-                break
-            response = self.get_response(user_input)
-            print(f"chatBot: {response}")
-            print("You: ", end="", flush=True)
+        print("Welcome to the Smart ChatBot!\nType 'exit' to quit.\nType 'continue' or 'last' to resume a recent topic.")
+        try:
+            while True:
+                user_input = input("You: ").strip()
+                if user_input.lower() in ['exit', 'quit']:
+                    print("AI Bot: Goodbye!")
+                    break
+                if not user_input:
+                    print("AI Bot: Please enter a question or topic to continue.")
+                    continue
+
+                continue_topic = None
+                if re.search(r'\bcontinue\s+last\s+question\b', user_input.lower()):
+                    if self.history and self.question_history.get(self.history[-1]):
+                        topic = self.history[-1]
+                        last_q = self.question_history[topic][-1]['question']
+                        print(f"AI Bot: Continuing from question '{last_q}' in topic '{topic}'...")
+                        response = self.get_next_answer(last_q, topic)
+                        print(f"AI Bot: {response}")
+                    else:
+                        print("AI Bot: No previous question in this topic.")
+                    continue
+                elif user_input.lower() == 'reset search':
+                    if self.history and self.question_history.get(self.history[-1]):
+                        topic = self.history[-1]
+                        last_q = self.question_history[topic][-1]['question']
+                        self.query_data.pop(last_q, None)  # Clear cached data
+                        print(f"AI Bot: Reset search for '{last_q}'...")
+                        response = self.get_next_answer(last_q, topic)
+                        print(f"AI Bot: {response}")
+                    else:
+                        print("AI Bot: No previous question to reset.")
+                    continue
+                elif re.search(r'\b(continue|last|previous|go back)\b', user_input.lower()):
+                    if len(self.history) >= 1 and re.search(r'\b(last|previous)\s*(topic|content|question|one)?\b', user_input.lower()):
+                        continue_topic = self.history[-1]
+                        print(f"AI Bot: Resuming topic '{continue_topic}'...")
+                    elif len(self.history) >= 2 and re.search(r'\b(second\s*(last|previous)|before\s*last)\b', user_input.lower()):
+                        continue_topic = self.history[-2]
+                        print(f"AI Bot: Resuming topic '{continue_topic}'...")
+                    else:
+                        print("AI Bot: No recent topics to continue. Please ask a new question.")
+                        continue
+
+                response = self.get_next_answer(user_input, continue_topic)
+                print(f"AI Bot: {response}")
+
+        except KeyboardInterrupt:
+            print("\nAI Bot: Interrupted by user. Exiting...")
+        finally:
+            self.__del__()
 
 if __name__ == "__main__":
-    json_files = ["vijay_4.json", "lana_2.json"]
-    chatbot = DocChatBot(json_files)
-    chatbot.chat()
-    
+    bot = DocChatBot()
+    bot.chat()
