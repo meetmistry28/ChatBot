@@ -1,0 +1,11 @@
+{
+  "topic": "law",
+  "qas": [
+    {
+      "question": "what is newton's first law?",
+      "answer": [
+        "Newton’s first law states that “An object at rest stays at rest, and object in motion stays at a constant speed and in a straight line unless acted upon by force” ."
+      ]
+    }
+  ]
+}

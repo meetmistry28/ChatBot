@@ -1,0 +1,11 @@
+{
+  "topic": "machine",
+  "qas": [
+    {
+      "question": "what is machine learning?",
+      "answer": [
+        "Machine learning is a branch of artificial intelligence that enables algorithms to uncover hidden patterns within datasets. It allows them to predict new, similar data without explicit programming for each task. Machine learning finds applications in diverse fields such as image and speech recognition, natural language processing, recommendation systems, fraud detection, portfolio optimization, and automating tasks."
+      ]
+    }
+  ]
+}

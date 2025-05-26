@@ -1,0 +1,32 @@
+{
+  "topic": "ai",
+  "qas": [
+    {
+      "question": "who is ai?",
+      "answer": [
+        "Artificial intelligence ( AI ) refers to the capability of computational systems to perform tasks typically associated with human intelligence , such as learning, reasoning, problem-solving, perception, and decision-making. It is a field of research in computer science that develops and studies methods and software that enable machines to perceive their environment and use learning and intelligence to take actions that maximize their chances of achieving defined goals. Such machines may be called AIs."
+      ]
+    },
+    {
+      "question": "what is ai?",
+      "answer": [
+        "AI is not only for engineers. If you want your organization to become better at using AI, this is the course to tell everyone--especially your non-technical ...",
+        "Artificial intelligence (AI) refers to computer systems capable of performing complex tasks that historically only a human could do, such as reasoning, making decisions, or solving problems."
+      ]
+    },
+    {
+      "question": "why we use ai?",
+      "answer": [
+        "On a more complex scale, self-driving cars use a complex network of AI systems to make real-time decisions as they drive to keep the ‘driver’ and passengers safe throughout the journey. These kinds of cars receive data through a range of sensors, with a central computer using machine learning to make decisions based on patterns identified by those sensors, such as proximity to other cars, traffic lights and changes in the weather on the road."
+      ]
+    },
+    {
+      "question": "who is katrina kaif?",
+      "answer": "Katrina Kaif was born in British Hong Kong with her mother's surname Turquotte (also spelt Turcotte), on 16 July 1983. Her father, Mohammed Kaif, is a British businessman of Kashmiri descent and her mother (Suzanne, also spelt Susanna) is an English lawyer and charity worker. She has seven siblings; one sister, Isabel, is also a model and actress. Kaif's parents divorced when she was a child, and her father moved to the United States. She said her father had no influence on her or her siblings while they were growing up, and that they were raised by their mother. In a 2009 interview with The Indian Express , she said she was not in touch with her father. Ethnically, Katrina stated that she is \"hundred per cent Indian\"."
+    },
+    {
+      "question": "who is katrina kaif?",
+      "answer": "Katrina Kaif was born in British Hong Kong with her mother's surname Turquotte (also spelt Turcotte), on 16 July 1983. Her father, Mohammed Kaif, is a British businessman of Kashmiri descent and her mother (Suzanne, also spelt Susanna) is an English lawyer and charity worker. She has seven siblings; one sister, Isabel, is also a model and actress. Kaif's parents divorced when she was a child, and her father moved to the United States. She said her father had no influence on her or her siblings while they were growing up, and that they were raised by their mother. In a 2009 interview with The Indian Express , she said she was not in touch with her father. Ethnically, Katrina stated that she is \"hundred per cent Indian\"."
+    }
+  ]
+}

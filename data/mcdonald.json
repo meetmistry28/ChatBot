@@ -1,0 +1,12 @@
+{
+  "qas": [
+    {
+      "question": "what is mcdonald's?",
+      "answer": "McDonald's is the world's second-largest fast food restaurant chain by number of locations , surpassed only by Chinese chain Mixue Ice Cream & Tea as of September 2024. McDonald's primary offerings are hamburgers, cheeseburgers , and french fries . Other items on their menu include chicken, fish, fruit, and salads. Their bestselling licensed item is their french fries, followed by the Big Mac . The McDonald's Corporation revenues come from the rent, royalties , and fees paid by the franchisees, as well as sales in company-operated restaurants. In 2018, McDonald's was the world's second-largest private employer with 1.7 million employees (behind only Walmart with 2.3 million employees), the majority of whom work in the restaurant's franchises."
+    },
+    {
+      "question": "my last topic?",
+      "answer": "Talking about your last vacation is a good topic to prove how much you have learned about the simple past."
+    }
+  ]
+}

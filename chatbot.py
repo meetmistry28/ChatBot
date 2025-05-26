@@ -93,17 +93,7 @@ class DocChatBot:
         self.stop_words = set(stopwords.words('english'))
         self.query_memory = {}
         self.web_memory = {}
-        self.known_topics = [
-            "artificial intelligence", "ai", "svm", "support vector machine",
-            "machine learning", "ml", "deep learning", "dl", "nlp",
-            "neural network", "chatbot", "language model"
-        ]
-
-    def _normalize_abbreviations(self, text):
-        text = text.lower()
-        text = re.sub(r'\bsupport vector machine\b', 'svm', text)
-        text = re.sub(r'\bartificial intelligence\b', 'ai', text)
-        return text
+        self.known_topics = []
 
     def _preprocess_text(self, text):
         text = self._normalize_abbreviations(text)

@@ -1,0 +1,12 @@
+{
+  "qas": [
+    {
+      "question": "what is zomato?",
+      "answer": "Zomato ( / z oʊ ˈ m æ ˈ t oʊ / or / z oʊ ˈ m ɑː ˈ t oʊ / ) is an Indian online food ordering and delivery service owned by Eternal Limited . Created in 2008 by Deepinder Goyal and Pankaj Chaddah, it began as a restaurant aggregator , providing menu information, user reviews, and recommendations, and expanding to more than 20 countries. In 2015, Zomato entered the food delivery market in India, which soon after became its core business. As of 2023, it provides food delivery and table reservation options in more than 800 Indian cities, and restaurant discovery services in the UAE."
+    },
+    {
+      "question": "what is last topic",
+      "answer": "This is a pool for guessing what the topic of the last article created on Wikipedia may be. Other topic pools exist for certain milestones (see one millionth and two-millionth topic pools and Wikipedia:500th language pool ), but none are as important as the last topic created. You may be wondering why something might be the last article. Well,"
+    }
+  ]
+}
