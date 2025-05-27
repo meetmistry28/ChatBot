@@ -1,0 +1,8 @@
+{
+  "qas": [
+    {
+      "question": "what is chrome?",
+      "answer": "Chrome is based on the open-source code of the Chromium project. Development of the browser began in 2006, spearheaded by Sundar Pichai . Chrome was \"largely developed\" in Google's Kitchener office."
+    }
+  ]
+}
